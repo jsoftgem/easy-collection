@@ -2,7 +2,7 @@ package com.jsoftgem.easycollection.util;
 
 import javax.lang.model.type.PrimitiveType;
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.*;
 
 /**
  * Created by rickzx98 on 28/02/2016.
@@ -12,7 +12,6 @@ public class ECollectionProcessor<T> {
     private Class<T> type;
     private int processed;
     private int total;
-    private Thread currentThread;
     private CollectionCriteria<T> collectionCriteria;
     private CollectionModifier<T> collectionModifier;
     private CollectionProgress collectionProgress;
@@ -32,7 +31,6 @@ public class ECollectionProcessor<T> {
     public ECollectionProcessor(Class<T> type) {
         this.type = type;
         this.processed = Integer.valueOf(0);
-        this.currentThread = Thread.currentThread();
 
     }
 
@@ -79,41 +77,59 @@ public class ECollectionProcessor<T> {
     }
 
     private List<T> findItems(List<T> data) {
+        processed = 0;
         total = data.size();
         if (collectionProgress != null) collectionProgress.setTotal(total);
         List<T> foundItems = new ArrayList<T>();
-        processed = 0;
+        ExecutorService executorService = Executors.newWorkStealingPool();
+        List<Callable<T>> callableList = new ArrayList<Callable<T>>();
         for (int count = 0; count < total; count++) {
-            searchThread(count, data, foundItems).start();
+            callableList.add(searchThread(count, data, foundItems));
         }
-        waitForProcess();
+        try {
+            executorService.invokeAll(callableList);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         return foundItems;
     }
 
     private void setItems(List<T> data) {
+        processed = 0;
         total = data.size();
         if (collectionProgress != null) collectionProgress.setTotal(total);
-        processed = 0;
+        ExecutorService executorService = Executors.newWorkStealingPool();
+        List<Callable<T>> callableList = new ArrayList<Callable<T>>();
         for (int count = 0; count < total; count++) {
-            searchThread(count, data).start();
+            callableList.add(searchThread(count, data));
         }
-        waitForProcess();
+        try {
+            executorService.invokeAll(callableList);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
     private <C> List<C> copyItems(List<T> source, CollectionCopy<T, C> collectionCopy) {
+        processed = 0;
         total = source.size();
         Object[] destination = new Object[total];
         List<C> destList = new ArrayList<C>();
         if (collectionProgress != null) collectionProgress.setTotal(total);
-        processed = 0;
+        List<Callable<T>> callableList = new ArrayList<Callable<T>>();
+        ExecutorService executorService = Executors.newWorkStealingPool();
         for (int count = 0; count < total; count++) {
             if (collectionCriteria != null) {
-                copyThread(count, source, destList, collectionCopy).start();
+                callableList.add(copyThread(count, source, destList, collectionCopy));
             } else {
-                copyThread(count, source, destination, collectionCopy).start();
+                callableList.add(copyThread(count, source, destination, collectionCopy));
             }
         }
-        waitForProcess();
+        try {
+            executorService.invokeAll(callableList);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         if (collectionCriteria == null)
             return (List<C>) Arrays.asList(destination);
         else
@@ -123,30 +139,30 @@ public class ECollectionProcessor<T> {
     private void deleteItems(List<T> source) {
         total = source.size();
         List<T> removeIndexList = new ArrayList<T>();
+        List<Callable<T>> callableList = new ArrayList<Callable<T>>();
+        ExecutorService executorService = Executors.newWorkStealingPool();
         if (collectionProgress != null) collectionProgress.setTotal(total);
         processed = 0;
         for (int count = 0; count < total; count++) {
-            deleteThread(count, source, removeIndexList).start();
+            callableList.add(deleteThread(count, source, removeIndexList));
         }
-        waitForProcess();
+        try {
+            executorService.invokeAll(callableList);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         source.removeAll(removeIndexList);
     }
-
-    private void waitForProcess() {
-        while (processed < total && currentThread.isAlive()) {
-        }
-    }
-
 
     private double getPercentage(int processed, int dataSize) {
         return (processed * 100) / dataSize;
     }
 
-    private <C> Thread copyThread(final int index, final List<T> data, final List<C> destination, final CollectionCopy<T, C> collectionCopy) {
-        return new Thread(new Runnable() {
-            public void run() {
+    private <C> Callable<T> copyThread(final int index, final List<T> data, final List<C> destination, final CollectionCopy<T, C> collectionCopy) {
+        return new Callable<T>() {
+            public T call() throws Exception {
+                T item = data.get(index);
                 try {
-                    T item = data.get(index);
                     T exposed;
                     try {
                         if (item instanceof PrimitiveType || item instanceof String) {
@@ -172,16 +188,16 @@ public class ECollectionProcessor<T> {
                 } finally {
                     incrementProcess();
                 }
-
+                return item;
             }
-        });
+        };
     }
 
-    private <C> Thread copyThread(final int index, final List<T> data, final Object[] destination, final CollectionCopy<T, C> collectionCopy) {
-        return new Thread(new Runnable() {
-            public void run() {
+    private <C> Callable<T> copyThread(final int index, final List<T> data, final Object[] destination, final CollectionCopy<T, C> collectionCopy) {
+        return new Callable<T>() {
+            public T call() throws Exception {
+                T item = data.get(index);
                 try {
-                    T item = data.get(index);
                     T exposed;
                     try {
                         if (item instanceof PrimitiveType || item instanceof String) {
@@ -205,16 +221,16 @@ public class ECollectionProcessor<T> {
                 } finally {
                     incrementProcess();
                 }
-
+                return item;
             }
-        });
+        };
     }
 
-    private Thread searchThread(final int index, final List<T> data) {
-        return new Thread(new Runnable() {
-            public void run() {
+    private Callable<T> searchThread(final int index, final List<T> data) {
+        return new Callable<T>() {
+            public T call() throws Exception {
+                T item = getItem(index, data);
                 try {
-                    T item = data.get(index);
                     T exposed;
                     try {
                         if (item instanceof PrimitiveType || item instanceof String) {
@@ -245,16 +261,17 @@ public class ECollectionProcessor<T> {
                 } finally {
                     incrementProcess();
                 }
-
+                return item;
             }
-        });
+        };
     }
 
-    private Thread searchThread(final int index, final List<T> data, final List<T> foundItems) {
-        return new Thread(new Runnable() {
-            public void run() {
+    private Callable<T> searchThread(final int index, final List<T> data, final List<T> foundItems) {
+        return new Callable<T>() {
+
+            public T call() throws Exception {
+                T item = getItem(index, data);
                 try {
-                    T item = data.get(index);
                     T exposed;
                     try {
                         if (item instanceof PrimitiveType || item instanceof String) {
@@ -278,15 +295,16 @@ public class ECollectionProcessor<T> {
                 } finally {
                     incrementProcess();
                 }
+                return item;
             }
-        });
+        };
     }
 
-    private Thread deleteThread(final int index, final List<T> data, final List<T> removeIndexList) {
-        return new Thread(new Runnable() {
-            public void run() {
+    private Callable<T> deleteThread(final int index, final List<T> data, final List<T> removeIndexList) {
+        return new Callable<T>() {
+            public T call() throws Exception {
+                T item = data.get(index);
                 try {
-                    T item = data.get(index);
                     T exposed;
                     try {
                         if (item instanceof PrimitiveType || item instanceof String) {
@@ -308,8 +326,17 @@ public class ECollectionProcessor<T> {
                 } finally {
                     incrementProcess();
                 }
+                return item;
             }
-        });
+        };
+    }
+
+    private T getItem(int index, List<T> data) {
+        T item = null;
+        synchronized (data) {
+            item = data.get(index);
+        }
+        return item;
     }
 
     public T getResult(List<T> data) {
